@@ -3,20 +3,16 @@
 import { PrismaClient } from "@prisma/client";
 const prisma = new PrismaClient();
 
-/* ---------- YENİ FONKSİYONLAR ve DİĞER İŞLEMLER ---------- */
+/* ---------- MASA/SIPARIŞ İŞLEMLERİ ---------- */
 export async function getRegionTablesAndSessions(regionId) {
   const tables = await prisma.table.findMany({
     where: { regionId },
     orderBy: { tableId: "asc" },
   });
-
   const tableIds = tables.map((t) => t.id);
 
   const sessions = await prisma.tableSession.findMany({
-    where: {
-      tableId: { in: tableIds },
-      status: "open",
-    },
+    where: { tableId: { in: tableIds }, status: "open" },
     include: { items: true },
   });
 
@@ -24,18 +20,20 @@ export async function getRegionTablesAndSessions(regionId) {
   for (const s of sessions) {
     sessionMap[s.tableId] = s;
   }
-
   return { tables, sessionMap };
 }
 
 export async function getRegions() {
-  return await prisma.region.findMany({
-    orderBy: { name: "asc" },
-  });
+  return await prisma.region.findMany({ orderBy: { name: "asc" } });
 }
 
 export async function createRegion(name) {
   return await prisma.region.create({ data: { name } });
+}
+
+// Yeni eklenen fonksiyon: Bölge silme
+export async function deleteRegion(regionId) {
+  return await prisma.region.delete({ where: { id: regionId } });
 }
 
 export async function getTablesByRegion(regionId) {
@@ -66,17 +64,12 @@ export async function addTable(regionId) {
   }
 
   return await prisma.table.create({
-    data: {
-      tableId: nextId,
-      regionId,
-    },
+    data: { tableId: nextId, regionId },
   });
 }
 
 export async function deleteTable(tableDbId) {
-  return await prisma.table.delete({
-    where: { id: tableDbId },
-  });
+  return await prisma.table.delete({ where: { id: tableDbId } });
 }
 
 export async function openTable(regionId, numericTableId) {
@@ -90,10 +83,7 @@ export async function openTable(regionId, numericTableId) {
   }
 
   let session = await prisma.tableSession.findFirst({
-    where: {
-      tableId: tableData.id,
-      status: "open",
-    },
+    where: { tableId: tableData.id, status: "open" },
     include: { items: true },
   });
 
@@ -117,10 +107,7 @@ export async function getOpenSession(regionId, numericTableId) {
   if (!tableData) return null;
 
   return await prisma.tableSession.findFirst({
-    where: {
-      tableId: tableData.id,
-      status: "open",
-    },
+    where: { tableId: tableData.id, status: "open" },
     include: { items: true },
   });
 }
@@ -134,15 +121,9 @@ export async function upsertOrderItems(tableSessionId, items) {
     } else {
       await prisma.tableSessionItem.upsert({
         where: {
-          tableSessionId_name: {
-            tableSessionId,
-            name: i.name,
-          },
+          tableSessionId_name: { tableSessionId, name: i.name },
         },
-        update: {
-          quantity: i.quantity,
-          price: i.price,
-        },
+        update: { quantity: i.quantity, price: i.price },
         create: {
           tableSessionId,
           name: i.name,
@@ -152,7 +133,6 @@ export async function upsertOrderItems(tableSessionId, items) {
       });
     }
   }
-
   const allItems = await prisma.tableSessionItem.findMany({
     where: { tableSessionId },
   });
@@ -166,10 +146,7 @@ export async function upsertOrderItems(tableSessionId, items) {
 }
 
 export async function upsertOrderItemsBulk(tableSessionId, items) {
-  await prisma.tableSessionItem.deleteMany({
-    where: { tableSessionId },
-  });
-
+  await prisma.tableSessionItem.deleteMany({ where: { tableSessionId } });
   await prisma.tableSessionItem.createMany({
     data: items.map((it) => ({
       tableSessionId,
@@ -178,7 +155,6 @@ export async function upsertOrderItemsBulk(tableSessionId, items) {
       quantity: it.quantity,
     })),
   });
-
   const allItems = await prisma.tableSessionItem.findMany({
     where: { tableSessionId },
   });
@@ -196,16 +172,10 @@ export async function payTable(sessionId, paymentMethod) {
   if (!session) throw new Error("Session not found!");
   if (session.status !== "open") throw new Error("Session not open!");
 
-  // Burada artık socket yayın yok, sadece DB güncellemesi
   const updatedSession = await prisma.tableSession.update({
     where: { id: sessionId },
-    data: {
-      status: "paid",
-      paymentMethod,
-      closedAt: new Date(),
-    },
+    data: { status: "paid", paymentMethod, closedAt: new Date() },
   });
-
   return updatedSession;
 }
 
@@ -214,15 +184,10 @@ export async function cancelTable(sessionId) {
   if (!session) throw new Error("Session not found!");
   if (session.status !== "open") throw new Error("Session not open!");
 
-  // Burada da socket yayın yok
   const updatedSession = await prisma.tableSession.update({
     where: { id: sessionId },
-    data: {
-      status: "canceled",
-      closedAt: new Date(),
-    },
+    data: { status: "canceled", closedAt: new Date() },
   });
-
   return updatedSession;
 }
 
@@ -242,20 +207,86 @@ export async function getPaidSessions() {
   });
 }
 
+/* ---------- ÜRÜN VE KATEGORİ İŞLEMLERİ ---------- */
 export async function getProducts() {
   return await prisma.product.findMany({
     orderBy: { name: "asc" },
+    include: { category: true },
   });
 }
 
-export async function createProduct(name, price) {
+export async function createProduct(name, price, categoryId = null, isFavorite = false) {
   return await prisma.product.create({
-    data: { name, price },
+    data: {
+      name,
+      price,
+      categoryId,
+      isFavorite,
+    },
+    include: { category: true },
   });
 }
 
 export async function deleteProduct(productId) {
   return await prisma.product.delete({
     where: { id: productId },
+  });
+}
+
+export async function updateProductFavorite(productId, newFavorite) {
+  return await prisma.product.update({
+    where: { id: productId },
+    data: { isFavorite: newFavorite },
+    include: { category: true },
+  });
+}
+
+/* ---------- YENİ: Ürün Fiyat Güncelleme ---------- */
+export async function updateProductPrice(productId, newPrice) {
+  // İsteğe bağlı olarak parseFloat(newPrice) kullanabilirsiniz.
+  return await prisma.product.update({
+    where: { id: productId },
+    data: { price: newPrice },
+    include: { category: true },
+  });
+}
+
+/* ---------- KATEGORİ İŞLEMLERİ ---------- */
+export async function getCategories() {
+  return await prisma.category.findMany({
+    orderBy: { name: "asc" },
+  });
+}
+
+export async function createCategory(name) {
+  return await prisma.category.create({
+    data: { name },
+  });
+}
+
+export async function deleteCategory(catId) {
+  return await prisma.category.delete({
+    where: { id: catId },
+  });
+}
+
+/**
+ * Ürünün categoryId alanını güncelleyen fonksiyon
+ * @param {string} productId - Ürünün ID'si
+ * @param {string|null} categoryId - Kategori ID'si veya null
+ */
+export async function updateProductCategory(productId, categoryId) {
+  return await prisma.product.update({
+    where: { id: productId },
+    data: { categoryId },
+    include: { category: true },
+  });
+}
+
+/* ---------- MASA ALIAS GÜNCELLEME (YENİ) ---------- */
+export async function renameTable(tableId, newAlias) {
+  return await prisma.table.update({
+    where: { id: tableId },
+    data: { alias: newAlias },
   });
 }

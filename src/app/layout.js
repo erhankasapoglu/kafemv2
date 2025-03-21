@@ -11,7 +11,7 @@ export const metadata = {
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <body className="antialiased bg-gray-100">
+      <body className="antialiased bg-red-900">
         <Providers>
           <Sidebar>{children}</Sidebar>
         </Providers>

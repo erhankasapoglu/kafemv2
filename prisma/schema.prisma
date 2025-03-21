@@ -16,11 +16,14 @@ model Region {
 }
 
 model Table {
-  id       String @id @default(auto()) @map("_id") @db.ObjectId
-  tableId  Int
-  regionId String
-  region   Region @relation(fields: [regionId], references: [id])
-  sessions TableSession[] @relation("TableSessions")
+  id        String @id @default(auto()) @map("_id") @db.ObjectId
+  tableId   Int
+  regionId  String
+  region    Region @relation(fields: [regionId], references: [id])
+  sessions  TableSession[] @relation("TableSessions")
+
+  // Yeni alan: Masa için özel bir isim / alias
+  alias     String?  // Opsiyonel, eğer doldurulmazsa null olur
 
   // Aynı region'da aynı tableId bir daha eklenemesin
   @@unique([regionId, tableId])
@@ -28,32 +31,71 @@ model Table {
 
 model TableSession {
   id             String   @id @default(auto()) @map("_id") @db.ObjectId
-  // tableId opsiyonel (String?), tablo silinirse null olabilir
   tableId        String?
   status         String
   total          Float
   paymentMethod  String?
   closedAt       DateTime?
 
-  items          TableSessionItem[] @relation("TableSessionItems")
-  // table da opsiyonel (Table?), onDelete: SetNull
-  table          Table? @relation("TableSessions", fields: [tableId], references: [id], onDelete: SetNull)
+  items    TableSessionItem[] @relation("TableSessionItems")
+  table    Table?             @relation("TableSessions", fields: [tableId], references: [id], onDelete: SetNull)
+  payments Payment[]          // Bir TableSession'a birden çok Payment kaydı tutabilmek için
 }
 
 model TableSessionItem {
   id             String   @id @default(auto()) @map("_id") @db.ObjectId
   tableSessionId String
+  productId      String?   // Ürün ID'si (Product ile ilişki)
   name           String
   price          Float
   quantity       Int
-  createdAt      DateTime @default(now())
+  createdAt      DateTime  @default(now())
 
-  tableSession   TableSession @relation("TableSessionItems", fields: [tableSessionId], references: [id])
+  // TableSession ilişkisi
+  tableSession TableSession @relation("TableSessionItems", fields: [tableSessionId], references: [id])
+
+  // Product ilişkisi (onDelete: SetNull => ürün silinirse bu kayıtta productId null olur)
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  // Bir session'da aynı ürün ismi bir defa olsun
   @@unique([tableSessionId, name], map: "tableSessionId_name")
 }
 
 model Product {
-  id    String @id @default(auto()) @map("_id") @db.ObjectId
-  name  String
-  price Float
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  name       String
+  price      Float
+  isFavorite Boolean  @default(false)
+
+  // Relation to Category
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id])
+
+  // Stok alanları
+  stock      Int    @default(0) // Mevcut stok
+  critical   Int    @default(0) // Kritik stok seviyesi
+
+  // Yeni: Tabloya eklenen ürünlerin takibi için
+  inStockList Boolean @default(false)
+
+  // Back-relation: TableSessionItem -> Product ilişkisini tamamlayan alan
+  tableSessionItems TableSessionItem[]
+}
+
+model Category {
+  id       String    @id @default(auto()) @map("_id") @db.ObjectId
+  name     String
+  products Product[]
+
+  @@unique([name])
+}
+
+model Payment {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  tableSessionId String
+  method         String?
+  amount         Float
+  createdAt      DateTime @default(now())
+
+  tableSession TableSession @relation(fields: [tableSessionId], references: [id])
 }

@@ -47,7 +47,7 @@ export default function Sidebar({ children }) {
             X
           </button>
 
-          {/* Ana Menü Butonları (manual prefetch + push) */}
+          {/* Ana Menü Butonları */}
           <nav className="flex flex-col gap-2">
             <button
               onMouseEnter={() => handleHover("/orders")}
@@ -73,6 +73,15 @@ export default function Sidebar({ children }) {
               Ürün Yönetimi
             </button>
 
+            {/* Yeni Eklendi: Stok Yönetimi */}
+            <button
+              onMouseEnter={() => handleHover("/stock")}
+              onClick={() => handleClick("/stock")}
+              className="hover:bg-gray-700 p-2 rounded text-left"
+            >
+              Stok Yönetimi
+            </button>
+
             {/* İstatistikler (Alt Menü) */}
             <div>
               <button
@@ -81,8 +90,6 @@ export default function Sidebar({ children }) {
               >
                 İstatistikler
               </button>
-
-              {/* Alt Menü (Ödemeler / İptal Edilenler) */}
               {statsOpen && (
                 <div className="pl-4 flex flex-col gap-1 mt-1">
                   <button

@@ -1,63 +1,68 @@
 "use client";
 import React, { useEffect, useRef, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { io } from "socket.io-client";
 
 export default function OrdersPage() {
+  const router = useRouter();
+
   const [regions, setRegions] = useState([]);
   const [selectedRegion, setSelectedRegion] = useState(null);
   const [tables, setTables] = useState([]);
   const [sessions, setSessions] = useState([]);
-  const [products, setProducts] = useState([]);
 
-  const [showOrderModal, setShowOrderModal] = useState(false);
+  // Ödeme modal
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedTableIndex, setSelectedTableIndex] = useState(null);
-  const [selectedQuantities, setSelectedQuantities] = useState({});
   const [paymentMethod, setPaymentMethod] = useState("cash");
+  const [paymentType, setPaymentType] = useState("full");
 
-  // Socket bağlantısı için ref
+  // Menü
+  const [menuOpenIndex, setMenuOpenIndex] = useState(null);
+
+  // MASA DEĞİŞTİR: Modal + state
+  const [showChangeTableModal, setShowChangeTableModal] = useState(false);
+  const [tableIndexToChange, setTableIndexToChange] = useState(null);
+  const [changeRegion, setChangeRegion] = useState("");
+  const [emptyTables, setEmptyTables] = useState([]);
+
+  // Socket.IO
   const socketRef = useRef(null);
-  // Güncellemeleri izlemek için (opsiyonel)
   const [updates, setUpdates] = useState([]);
 
-  // selectedRegion güncel kalması için
-  // (Bu örnekte useEffect bağımlılıklarına selectedRegion eklediğimiz için ref kullanımı opsiyonel)
-  // const selectedRegionRef = useRef(selectedRegion);
-  // useEffect(() => { selectedRegionRef.current = selectedRegion; }, [selectedRegion]);
-
-  // loadTablesForRegion fonksiyonunu useCallback ile sarmallıyoruz
+  // 1) MASALARI + SESSIONS YÜKLE
   const loadTablesForRegion = useCallback(async (regionId) => {
     try {
       const res = await fetch(`/api/region-tables-and-sessions?regionId=${regionId}`);
       const data = await res.json();
+
       setTables(data.tables);
-      const sArr = data.tables.map((t) => data.sessionMap[t.id] || null);
+      const sArr = data.tables.map((t) => {
+        let s = data.sessionMap[t.id] || null;
+        if (s && s.items && s.items.length === 0) {
+          s = null;
+        }
+        return s;
+      });
       setSessions(sArr);
     } catch (error) {
       console.error("Masalar yüklenirken hata:", error);
     }
   }, []);
 
-  // Sunucudan ilk verileri çekme
+  // 2) İLK YÜKLEME
   async function loadInitialData() {
     try {
-      // Bölgeleri çek
       const regionsRes = await fetch("/api/regions");
       const regionsData = await regionsRes.json();
       setRegions(regionsData);
 
-      // İlk bölgeyi seç ve masaları çek
       if (regionsData.length > 0) {
         setSelectedRegion(regionsData[0].id);
         await loadTablesForRegion(regionsData[0].id);
       }
-
-      // Ürünleri çek
-      const productsRes = await fetch("/api/products");
-      const productsData = await productsRes.json();
-      setProducts(productsData);
     } catch (error) {
-      console.error("Initial data yüklenirken hata:", error);
+      console.error("Initial data hata:", error);
     }
   }
 
@@ -65,17 +70,15 @@ export default function OrdersPage() {
     loadInitialData();
   }, [loadTablesForRegion]);
 
+  // 3) SOCKET.IO
   useEffect(() => {
-    // Socket.IO istemcisini başlat (örn: "http://localhost:3000" prod'da tam URL verin)
     const socket = io();
     socketRef.current = socket;
 
-    // "tableUpdated" eventini dinle
     socket.on("tableUpdated", (data) => {
       console.log("Gelen güncelleme:", data);
       setUpdates((prev) => [...prev, data]);
 
-      // Eğer status "open" ise, seçili bölgedeki masaları yeniden çek
       if (data.status === "open") {
         if (selectedRegion) {
           loadTablesForRegion(selectedRegion);
@@ -83,21 +86,16 @@ export default function OrdersPage() {
         return;
       }
 
-      // Diğer durumlarda (paid, canceled, closed) ilgili session'ı null yap
       setSessions((prev) =>
         prev.map((session) => {
           if (session && session.id === data.sessionId) {
-            if (
-              data.status === "paid" ||
-              data.status === "canceled" ||
-              data.status === "closed"
-            ) {
+            if (["paid", "canceled", "closed"].includes(data.status)) {
               return null;
             } else if (data.status === "open") {
               return {
                 ...session,
                 status: "open",
-                total: data.total !== undefined ? data.total : session.total,
+                total: data.total ?? session.total,
               };
             }
           }
@@ -111,25 +109,27 @@ export default function OrdersPage() {
     };
   }, [selectedRegion, loadTablesForRegion]);
 
-  // Bölge sekmesine tıklama
+  // 4) BÖLGE SEKME
   async function handleRegionTabClick(regionId) {
     setSelectedRegion(regionId);
     await loadTablesForRegion(regionId);
-    setShowOrderModal(false);
     setShowPaymentModal(false);
+    setMenuOpenIndex(null);
   }
 
-  // Masa tıklama -> /api/open-table çağrısı
+  // 5) MASAYA TIKLAYINCA OPEN
   async function handleTableClick(i) {
+    const t = tables[i];
+    if (!selectedRegion) return;
+
     try {
-      const t = tables[i];
-      if (!selectedRegion) return;
       const res = await fetch("/api/open-table", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ regionId: selectedRegion, tableId: t.tableId }),
       });
       const session = await res.json();
+
       setSessions((prev) => {
         const copy = [...prev];
         copy[i] = session;
@@ -137,116 +137,84 @@ export default function OrdersPage() {
       });
       setSelectedTableIndex(i);
 
-      // Ürün miktarlarını başlat
-      const initQty = {};
-      products.forEach((p) => {
-        initQty[p.id] = 0;
-      });
-      if (session?.items) {
-        for (let it of session.items) {
-          const found = products.find((p) => p.name === it.name);
-          if (found) {
-            initQty[found.id] = it.quantity;
-          }
-        }
-      }
-      setSelectedQuantities(initQty);
-      setShowOrderModal(true);
-    } catch (error) {
-      console.error("Masa açma hatası:", error);
+      router.push(`/tables/${t.id}?regionId=${selectedRegion}&sessionId=${session.id}`);
+    } catch (err) {
+      console.error("Masa açma hatası:", err);
     }
   }
 
-  // Sipariş modalını kapatırken, sipariş 0 ise iptal et
-  async function closeOrderModal() {
-    setShowOrderModal(false);
-    const s = sessions[selectedTableIndex];
-    if (!s) return;
-    const totalQty = Object.values(selectedQuantities).reduce((a, c) => a + c, 0);
-    if (totalQty === 0) {
-      await fetch("/api/cancel-table", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: s.id }),
-      });
-      setSessions((prev) => {
-        const copy = [...prev];
-        copy[selectedTableIndex] = null;
-        return copy;
-      });
-    }
-  }
-
-  // Sipariş ekle -> /api/upsert-order-items-bulk çağrısı
-  async function handleAddOrder() {
-    const s = sessions[selectedTableIndex];
-    if (!s) return;
-    const totalQty = Object.values(selectedQuantities).reduce((a, c) => a + c, 0);
-    if (totalQty === 0) {
-      await fetch("/api/cancel-table", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: s.id }),
-      });
-      setSessions((prev) => {
-        const copy = [...prev];
-        copy[selectedTableIndex] = null;
-        return copy;
-      });
-      setShowOrderModal(false);
-      return;
-    }
-    const chosenItems = products.map((p) => ({
-      name: p.name,
-      price: p.price,
-      quantity: selectedQuantities[p.id] || 0,
-    }));
-    const res = await fetch("/api/upsert-order-items-bulk", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionId: s.id, items: chosenItems }),
-    });
-    const updated = await res.json();
-    setSessions((prev) => {
-      const copy = [...prev];
-      copy[selectedTableIndex] = updated;
-      return copy;
-    });
-    setShowOrderModal(false);
-  }
-
-  // Masa iptal
+  // 6) MASA İPTAL
   async function handleCancelTable(i) {
     const s = sessions[i];
     if (!s) return;
+
     await fetch("/api/cancel-table", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ sessionId: s.id }),
     });
+
     setSessions((prev) => {
       const copy = [...prev];
       copy[i] = null;
       return copy;
     });
+    setMenuOpenIndex(null);
   }
 
-  // Ödeme modalını aç
+  // 7) MENÜ (3 nokta)
+  function openMenuSheet(e, i) {
+    e.stopPropagation();
+    setMenuOpenIndex(i);
+  }
+  function closeMenuSheet() {
+    setMenuOpenIndex(null);
+  }
+
+  // 8) ÖDEME MODAL
   function handlePaymentModal(i) {
     setSelectedTableIndex(i);
     setPaymentMethod("cash");
+    setPaymentType("full");
     setShowPaymentModal(true);
+    setMenuOpenIndex(null);
+  }
+  function handlePartialPaymentModal(i) {
+    setSelectedTableIndex(i);
+    setPaymentMethod("cash");
+    setPaymentType("partial");
+    setShowPaymentModal(true);
+    setMenuOpenIndex(null);
   }
 
-  // Ödemeyi onayla
   async function handleConfirmPayment() {
     const s = sessions[selectedTableIndex];
     if (!s) return;
-    await fetch("/api/pay-table", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionId: s.id, paymentMethod }),
-    });
+
+    if (paymentType === "full") {
+      await fetch("/api/pay-table", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: s.id, paymentMethod }),
+      });
+    } else {
+      const sumPaid = s.payments ? s.payments.reduce((acc, pay) => acc + pay.amount, 0) : 0;
+      const remaining = s.total - sumPaid;
+      if (remaining <= 0) {
+        alert("Bu masada ödenecek bir tutar kalmadı.");
+        return;
+      }
+      await fetch("/api/partial-payment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: s.id,
+          method: paymentMethod,
+          amount: remaining,
+        }),
+      });
+    }
+
     setSessions((prev) => {
       const copy = [...prev];
       copy[selectedTableIndex] = null;
@@ -255,162 +223,250 @@ export default function OrdersPage() {
     setShowPaymentModal(false);
   }
 
-  // Ürün miktarını artır/azalt
-  function increment(prodId) {
-    setSelectedQuantities((prev) => ({
-      ...prev,
-      [prodId]: (prev[prodId] || 0) + 1,
-    }));
+  // 9) MASAYI DEĞİŞTİR
+  function handleChangeTable() {
+    setTableIndexToChange(menuOpenIndex);
+    setShowChangeTableModal(true);
+    closeMenuSheet();
   }
-  function decrement(prodId) {
-    setSelectedQuantities((prev) => ({
-      ...prev,
-      [prodId]: Math.max((prev[prodId] || 0) - 1, 0),
-    }));
+  
+  function handleMergeTable() {
+    alert("Masaları Birleştir (placeholder).");
+    closeMenuSheet();
   }
 
+  // BÖLGE SEÇİMİ -> Boş Masaları Getir
+  async function handleRegionSelect(newRegionId) {
+    setChangeRegion(newRegionId);
+    if (!newRegionId) {
+      setEmptyTables([]);
+      return;
+    }
+    try {
+      const res = await fetch(`/api/region-tables-and-sessions?regionId=${newRegionId}`);
+      const data = await res.json();
+
+      const localTables = data.tables;
+      const sessionMap = data.sessionMap;
+
+      const empties = localTables.filter((t) => {
+        const s = sessionMap[t.id];
+        if (!s) return true;
+        if (s.items && s.items.length === 0) return true;
+        return false;
+      });
+
+      setEmptyTables(empties);
+    } catch (err) {
+      console.error("Bölge boş masalar hata:", err);
+    }
+  }
+
+  // MASA TRANSFER
+  async function handleTransferTable(newTableId) {
+    try {
+      const s = sessions[tableIndexToChange];
+      if (!s) return;
+
+      const resp = await fetch("/api/transfer-table", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: s.id,
+          newTableId,
+        }),
+      });
+      if (!resp.ok) {
+        throw new Error("Masa aktarılırken hata oluştu.");
+      }
+
+      // Yeniden yükle
+      if (selectedRegion) {
+        await loadTablesForRegion(selectedRegion);
+      }
+
+      setShowChangeTableModal(false);
+    } catch (err) {
+      console.error("Masa aktarılırken hata oluştu:", err);
+      alert("Masa aktarılırken hata oluştu.");
+    }
+  }
+
+  // 10) RENDER
   return (
-    <div className="p-4 flex flex-col items-center gap-4">
-      <h1 className="text-2xl font-bold">Ana Sayfa - Masa/Sipariş Yönetimi</h1>
-
-      {/* Bölge Sekmeleri */}
-      <div className="flex gap-2">
-        {regions.map((r) => (
-          <button
-            key={r.id}
-            onClick={() => handleRegionTabClick(r.id)}
-            className={`px-3 py-1 rounded ${
-              selectedRegion === r.id ? "bg-blue-600 text-white" : "bg-gray-300"
-            }`}
-          >
-            {r.name}
-          </button>
-        ))}
+    <div className="min-h-screen bg-gray-100 flex flex-col">
+      {/* BÖLGE SEKME LİSTESİ */}
+      <div className="flex border-b border-gray-300 bg-white overflow-x-auto">
+        {regions.map((r) => {
+          const isActive = selectedRegion === r.id;
+          return (
+            <button
+              key={r.id}
+              onClick={() => handleRegionTabClick(r.id)}
+              className={`flex-1 text-center py-3 font-semibold transition-colors ${
+                isActive
+                  ? "text-red-600 border-b-2 border-red-600"
+                  : "text-gray-600"
+              }`}
+            >
+              {r.name}
+            </button>
+          );
+        })}
       </div>
 
-      {/* Masalar */}
-      <div className="flex gap-4 flex-wrap mt-4">
+      {/* MASALAR */}
+      <div className="p-4 grid grid-cols-3 grid-rows-8 gap-4">
         {tables.map((table, i) => {
           const session = sessions[i];
-          let color = "bg-gray-200";
-          let display = "Açılmamış";
+          if (!session) {
+            // Masa boş
+            return (
+              <div
+                key={table.id}
+                onClick={() => handleTableClick(i)}
+                className="relative rounded-md border border-gray-300 bg-white
+                           cursor-pointer text-center aspect-[2/1]
+                           flex flex-col items-center justify-center"
+              >
+                <div className="font-bold text-gray-700">
+                  {table.alias ? table.alias : `Masa ${table.tableId}`}
+                </div>
+              </div>
+            );
+          }
 
-          if (session) {
-            const itemCount =
-              session.items?.reduce((acc, cur) => acc + cur.quantity, 0) || 0;
-            if (session.status === "open") {
-              color = itemCount > 0 ? "bg-green-200" : "bg-gray-200";
-              display = `Açık - ${session.total} TL`;
-            } else if (session.status === "paid") {
-              color = "bg-blue-200";
-              display = `Ödendi - ${session.total} TL`;
-            } else if (session.status === "canceled") {
-              color = "bg-red-200";
-              display = `İptal - ${session.total} TL`;
-            }
+          const sumPaid = session.payments
+            ? session.payments.reduce((acc, pay) => acc + pay.amount, 0)
+            : 0;
+          const total = session.total;
+          const remaining = Math.max(total - sumPaid, 0);
+
+          let containerClass = `
+            relative
+            rounded-md
+            border border-gray-300
+            bg-white
+            cursor-pointer
+            text-center
+            aspect-[2/1]
+            flex
+            flex-col
+            items-center
+            justify-center
+          `;
+          if (session.status === "open") {
+            containerClass += " border-red-500 border-2";
+          } else if (session.status === "paid") {
+            containerClass += " bg-blue-100";
+          } else if (session.status === "canceled") {
+            containerClass += " bg-gray-200";
           }
 
           return (
             <div
               key={table.id}
-              className={`w-40 h-40 flex flex-col justify-center items-center cursor-pointer relative ${color}`}
               onClick={() => {
-                if (!session || session.status === "open") {
+                if (session.status === "open") {
                   handleTableClick(i);
                 }
               }}
+              className={containerClass}
             >
-              <div className="font-bold">Masa {table.tableId}</div>
-              <div>{display}</div>
-              {session && session.status === "open" && (
-                <div className="flex gap-2 mt-2">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handlePaymentModal(i);
-                    }}
-                    className="px-2 py-1 bg-blue-400 text-white rounded"
-                  >
-                    Öde
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleCancelTable(i);
-                    }}
-                    className="px-2 py-1 bg-red-400 text-white rounded"
-                  >
-                    İptal
-                  </button>
-                </div>
+              <div className="font-bold text-gray-700">
+                {table.alias ? table.alias : `Masa ${table.tableId}`}
+              </div>
+              <div className="text-sm text-gray-600 mt-0">
+                {sumPaid === 0
+                  ? `${total} TL`
+                  : `${sumPaid} / ${total} TL (Kalan: ${remaining})`}
+              </div>
+
+              {session.status === "open" && (
+                <button
+                  onClick={(e) => openMenuSheet(e, i)}
+                  className="absolute top-2 right-2 text-gray-500 text-xl"
+                >
+                  &#8942;
+                </button>
               )}
             </div>
           );
         })}
       </div>
 
-      {/* Sipariş Ekle Modal */}
-      {showOrderModal && selectedTableIndex !== null && (
-        <div className="fixed inset-0 bg-black/50 flex justify-center items-center">
-          <div className="bg-white p-4 rounded w-72">
-            <h2 className="text-xl font-bold mb-2">
-              Masa {tables[selectedTableIndex].tableId} Sipariş Ekle
-            </h2>
-            <div
-              className="flex flex-col gap-4 mb-4"
-              style={{ maxHeight: "300px", overflowY: "auto" }}
-            >
-              {products.length === 0 && <div>Menüde ürün yok.</div>}
-              {products.map((p) => (
-                <div key={p.id} className="flex items-center justify-between">
-                  <span>
-                    {p.name} - {p.price} TL
-                  </span>
-                  <div className="flex items-center gap-2">
+      {/* BOTTOM SHEET MENÜ */}
+      {menuOpenIndex !== null && (
+        <div
+          className="fixed inset-0 z-50 flex flex-col justify-end bg-black/50
+                     transition-all duration-500"
+          onClick={closeMenuSheet}
+        >
+          <div
+            className="bg-white rounded-t-xl p-4 transform transition-transform
+                       duration-500 translate-y-0"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex flex-col gap-2">
+              {(() => {
+                const s = sessions[menuOpenIndex];
+                if (!s) return null;
+
+                const sumPaid = s.payments
+                  ? s.payments.reduce((acc, pay) => acc + pay.amount, 0)
+                  : 0;
+                const remaining = Math.max(s.total - sumPaid, 0);
+
+                return (
+                  <>
                     <button
-                      onClick={() => decrement(p.id)}
-                      className="px-2 py-1 bg-gray-300 rounded"
+                      onClick={() => handlePartialPaymentModal(menuOpenIndex)}
+                      className="text-left px-2 py-2 hover:bg-gray-100 rounded"
                     >
-                      -
+                      {`Hızlı Öde (${remaining} ₺)`}
                     </button>
-                    <span>{selectedQuantities[p.id] || 0}</span>
                     <button
-                      onClick={() => increment(p.id)}
-                      className="px-2 py-1 bg-gray-300 rounded"
+                      onClick={() => handleCancelTable(menuOpenIndex)}
+                      className="text-left px-2 py-2 hover:bg-gray-100 rounded"
                     >
-                      +
+                      Masa İptal
                     </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="flex gap-2">
+                  </>
+                );
+              })()}
+
               <button
-                onClick={closeOrderModal}
-                className="px-4 py-2 bg-gray-300 rounded"
+                onClick={handleChangeTable}
+                className="text-left px-2 py-2 hover:bg-gray-100 rounded"
               >
-                Kapat
+                Masayı Değiştir
               </button>
               <button
-                onClick={handleAddOrder}
-                className="px-4 py-2 bg-blue-500 text-white rounded"
+                onClick={handleMergeTable}
+                className="text-left px-2 py-2 hover:bg-gray-100 rounded"
               >
-                Kaydet
+                Masaları Birleştir
+              </button>
+              <button
+                onClick={closeMenuSheet}
+                className="text-left px-2 py-2 hover:bg-gray-100 rounded"
+              >
+                Vazgeç
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Ödeme Modal */}
+      {/* ÖDEME MODAL */}
       {showPaymentModal && selectedTableIndex !== null && (
         <div className="fixed inset-0 bg-black/50 flex justify-center items-center">
-          <div className="bg-white p-4 rounded">
+          <div className="bg-white p-4 rounded shadow w-72">
             <h2 className="text-xl font-bold mb-2">
-              Ödeme: Masa {tables[selectedTableIndex].tableId}
+              Masa {tables[selectedTableIndex].tableId} Ödeme
             </h2>
             <div className="flex gap-4 mb-4">
-              <label>
+              <label className="flex items-center gap-1">
                 <input
                   type="radio"
                   name="payment"
@@ -418,9 +474,9 @@ export default function OrdersPage() {
                   checked={paymentMethod === "cash"}
                   onChange={(e) => setPaymentMethod(e.target.value)}
                 />
-                <span className="ml-2">Nakit</span>
+                <span>Nakit</span>
               </label>
-              <label>
+              <label className="flex items-center gap-1">
                 <input
                   type="radio"
                   name="payment"
@@ -428,10 +484,10 @@ export default function OrdersPage() {
                   checked={paymentMethod === "card"}
                   onChange={(e) => setPaymentMethod(e.target.value)}
                 />
-                <span className="ml-2">Kart</span>
+                <span>Kart</span>
               </label>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 justify-end">
               <button
                 onClick={() => setShowPaymentModal(false)}
                 className="px-4 py-2 bg-gray-300 rounded"
@@ -443,6 +499,56 @@ export default function OrdersPage() {
                 className="px-4 py-2 bg-blue-500 text-white rounded"
               >
                 Onayla
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MASA DEĞİŞTİR MODALI */}
+      {showChangeTableModal && (
+        <div className="fixed inset-0 bg-black/50 flex justify-center items-center z-50">
+          <div className="bg-white p-4 w-72">
+            <h2 className="text-sm font-bold mb-2">Masayı Değiştir</h2>
+
+            <label className="block text-xs font-semibold mb-1">Bölge Seç:</label>
+            <select
+              className="border px-2 py-1 text-xs w-full mb-2"
+              value={changeRegion}
+              onChange={(e) => handleRegionSelect(e.target.value)}
+            >
+              <option value="">-- Seçiniz --</option>
+              {regions.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}
+                </option>
+              ))}
+            </select>
+
+            {changeRegion && (
+              <div className="max-h-48 overflow-y-auto border p-2 mb-2">
+                {emptyTables.length === 0 ? (
+                  <div className="text-xs text-gray-500">Boş masa yok</div>
+                ) : (
+                  emptyTables.map((t) => (
+                    <div
+                      key={t.id}
+                      onClick={() => handleTransferTable(t.id)}
+                      className="p-1 border mb-1 cursor-pointer text-xs text-center hover:bg-gray-100"
+                    >
+                      Masa {t.tableId}
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
+            <div className="flex justify-end">
+              <button
+                onClick={() => setShowChangeTableModal(false)}
+                className="bg-gray-300 px-2 py-1 text-xs"
+              >
+                İptal
               </button>
             </div>
           </div>
