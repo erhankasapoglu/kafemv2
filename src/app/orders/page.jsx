@@ -20,26 +20,27 @@ export default function OrdersPage() {
   // Menü
   const [menuOpenIndex, setMenuOpenIndex] = useState(null);
 
-  // MASA DEĞİŞTİR: Modal + state
-  const [showChangeTableModal, setShowChangeTableModal] = useState(false);
-  const [tableIndexToChange, setTableIndexToChange] = useState(null);
-  const [changeRegion, setChangeRegion] = useState("");
-  const [emptyTables, setEmptyTables] = useState([]);
-
   // Socket.IO
   const socketRef = useRef(null);
   const [updates, setUpdates] = useState([]);
 
+  // ----------------------------------------------------------------
   // 1) MASALARI + SESSIONS YÜKLE
+  // ----------------------------------------------------------------
   const loadTablesForRegion = useCallback(async (regionId) => {
     try {
       const res = await fetch(`/api/region-tables-and-sessions?regionId=${regionId}`);
+      if (!res.ok) throw new Error("Masalar yüklenirken hata oluştu.");
       const data = await res.json();
 
       setTables(data.tables);
+
+      // sessions dizisi, tablodaki her index'e karşılık gelecek şekilde
+      // data.sessionMap içindeki verileri eşliyor (boşsa null).
       const sArr = data.tables.map((t) => {
         let s = data.sessionMap[t.id] || null;
         if (s && s.items && s.items.length === 0) {
+          // items 0'sa session'ı null kabul ediyoruz
           s = null;
         }
         return s;
@@ -50,11 +51,14 @@ export default function OrdersPage() {
     }
   }, []);
 
+  // ----------------------------------------------------------------
   // 2) İLK YÜKLEME
+  // ----------------------------------------------------------------
   async function loadInitialData() {
     try {
-      const regionsRes = await fetch("/api/regions");
-      const regionsData = await regionsRes.json();
+      const res = await fetch("/api/regions");
+      if (!res.ok) throw new Error("Bölgeler yüklenirken hata oluştu.");
+      const regionsData = await res.json();
       setRegions(regionsData);
 
       if (regionsData.length > 0) {
@@ -70,7 +74,9 @@ export default function OrdersPage() {
     loadInitialData();
   }, [loadTablesForRegion]);
 
+  // ----------------------------------------------------------------
   // 3) SOCKET.IO
+  // ----------------------------------------------------------------
   useEffect(() => {
     const socket = io();
     socketRef.current = socket;
@@ -79,6 +85,7 @@ export default function OrdersPage() {
       console.log("Gelen güncelleme:", data);
       setUpdates((prev) => [...prev, data]);
 
+      // Eğer status "open" ise, masayı yenilemek için tabloyu tekrar yükle
       if (data.status === "open") {
         if (selectedRegion) {
           loadTablesForRegion(selectedRegion);
@@ -86,12 +93,16 @@ export default function OrdersPage() {
         return;
       }
 
+      // Aksi halde sessions dizisinde ilgili session'ı güncelle
       setSessions((prev) =>
         prev.map((session) => {
           if (session && session.id === data.sessionId) {
+            // paid, canceled, closed durumlarında session'ı null yap
             if (["paid", "canceled", "closed"].includes(data.status)) {
               return null;
-            } else if (data.status === "open") {
+            }
+            // open durumunda session güncelle
+            else if (data.status === "open") {
               return {
                 ...session,
                 status: "open",
@@ -109,7 +120,9 @@ export default function OrdersPage() {
     };
   }, [selectedRegion, loadTablesForRegion]);
 
+  // ----------------------------------------------------------------
   // 4) BÖLGE SEKME
+  // ----------------------------------------------------------------
   async function handleRegionTabClick(regionId) {
     setSelectedRegion(regionId);
     await loadTablesForRegion(regionId);
@@ -117,7 +130,9 @@ export default function OrdersPage() {
     setMenuOpenIndex(null);
   }
 
+  // ----------------------------------------------------------------
   // 5) MASAYA TIKLAYINCA OPEN
+  // ----------------------------------------------------------------
   async function handleTableClick(i) {
     const t = tables[i];
     if (!selectedRegion) return;
@@ -126,8 +141,15 @@ export default function OrdersPage() {
       const res = await fetch("/api/open-table", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ regionId: selectedRegion, tableId: t.tableId }),
+        body: JSON.stringify({
+          regionId: selectedRegion,
+          tableId: t.tableId,
+        }),
       });
+      if (!res.ok) {
+        console.error("Masa açma hatası:", await res.text());
+        return;
+      }
       const session = await res.json();
 
       setSessions((prev) => {
@@ -137,13 +159,16 @@ export default function OrdersPage() {
       });
       setSelectedTableIndex(i);
 
+      // Masa açıldıktan sonra tables/[id] sayfasına yönlendir
       router.push(`/tables/${t.id}?regionId=${selectedRegion}&sessionId=${session.id}`);
     } catch (err) {
       console.error("Masa açma hatası:", err);
     }
   }
 
+  // ----------------------------------------------------------------
   // 6) MASA İPTAL
+  // ----------------------------------------------------------------
   async function handleCancelTable(i) {
     const s = sessions[i];
     if (!s) return;
@@ -162,7 +187,9 @@ export default function OrdersPage() {
     setMenuOpenIndex(null);
   }
 
+  // ----------------------------------------------------------------
   // 7) MENÜ (3 nokta)
+  // ----------------------------------------------------------------
   function openMenuSheet(e, i) {
     e.stopPropagation();
     setMenuOpenIndex(i);
@@ -171,7 +198,9 @@ export default function OrdersPage() {
     setMenuOpenIndex(null);
   }
 
+  // ----------------------------------------------------------------
   // 8) ÖDEME MODAL
+  // ----------------------------------------------------------------
   function handlePaymentModal(i) {
     setSelectedTableIndex(i);
     setPaymentMethod("cash");
@@ -191,13 +220,19 @@ export default function OrdersPage() {
     const s = sessions[selectedTableIndex];
     if (!s) return;
 
+    // Full Payment
     if (paymentType === "full") {
       await fetch("/api/pay-table", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: s.id, paymentMethod }),
+        body: JSON.stringify({
+          sessionId: s.id,
+          paymentMethod,
+        }),
       });
-    } else {
+    } 
+    // Partial Payment
+    else {
       const sumPaid = s.payments ? s.payments.reduce((acc, pay) => acc + pay.amount, 0) : 0;
       const remaining = s.total - sumPaid;
       if (remaining <= 0) {
@@ -215,6 +250,7 @@ export default function OrdersPage() {
       });
     }
 
+    // Ödeme sonrası session null
     setSessions((prev) => {
       const copy = [...prev];
       copy[selectedTableIndex] = null;
@@ -223,76 +259,25 @@ export default function OrdersPage() {
     setShowPaymentModal(false);
   }
 
-  // 9) MASAYI DEĞİŞTİR
+  // ----------------------------------------------------------------
+  // 9) MASAYI DEĞİŞTİR (Yeni Sayfaya Yönlendirme)
+  // ----------------------------------------------------------------
   function handleChangeTable() {
-    setTableIndexToChange(menuOpenIndex);
-    setShowChangeTableModal(true);
+    const s = sessions[menuOpenIndex];
+    if (!s) return;
+    // sessionId ile "/changetable" sayfasına yönlendirme
+    router.push(`/changetable?sessionId=${s.id}`);
     closeMenuSheet();
   }
-  
+
   function handleMergeTable() {
     alert("Masaları Birleştir (placeholder).");
     closeMenuSheet();
   }
 
-  // BÖLGE SEÇİMİ -> Boş Masaları Getir
-  async function handleRegionSelect(newRegionId) {
-    setChangeRegion(newRegionId);
-    if (!newRegionId) {
-      setEmptyTables([]);
-      return;
-    }
-    try {
-      const res = await fetch(`/api/region-tables-and-sessions?regionId=${newRegionId}`);
-      const data = await res.json();
-
-      const localTables = data.tables;
-      const sessionMap = data.sessionMap;
-
-      const empties = localTables.filter((t) => {
-        const s = sessionMap[t.id];
-        if (!s) return true;
-        if (s.items && s.items.length === 0) return true;
-        return false;
-      });
-
-      setEmptyTables(empties);
-    } catch (err) {
-      console.error("Bölge boş masalar hata:", err);
-    }
-  }
-
-  // MASA TRANSFER
-  async function handleTransferTable(newTableId) {
-    try {
-      const s = sessions[tableIndexToChange];
-      if (!s) return;
-
-      const resp = await fetch("/api/transfer-table", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionId: s.id,
-          newTableId,
-        }),
-      });
-      if (!resp.ok) {
-        throw new Error("Masa aktarılırken hata oluştu.");
-      }
-
-      // Yeniden yükle
-      if (selectedRegion) {
-        await loadTablesForRegion(selectedRegion);
-      }
-
-      setShowChangeTableModal(false);
-    } catch (err) {
-      console.error("Masa aktarılırken hata oluştu:", err);
-      alert("Masa aktarılırken hata oluştu.");
-    }
-  }
-
+  // ----------------------------------------------------------------
   // 10) RENDER
+  // ----------------------------------------------------------------
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col">
       {/* BÖLGE SEKME LİSTESİ */}
@@ -336,12 +321,14 @@ export default function OrdersPage() {
             );
           }
 
+          // Session varsa
           const sumPaid = session.payments
             ? session.payments.reduce((acc, pay) => acc + pay.amount, 0)
             : 0;
           const total = session.total;
           const remaining = Math.max(total - sumPaid, 0);
 
+          // Masa stilini duruma göre renklendir
           let containerClass = `
             relative
             rounded-md
@@ -384,7 +371,10 @@ export default function OrdersPage() {
 
               {session.status === "open" && (
                 <button
-                  onClick={(e) => openMenuSheet(e, i)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setMenuOpenIndex(i);
+                  }}
                   className="absolute top-2 right-2 text-gray-500 text-xl"
                 >
                   &#8942;
@@ -435,18 +425,23 @@ export default function OrdersPage() {
                 );
               })()}
 
+              {/* MASAYI DEĞİŞTİR */}
               <button
                 onClick={handleChangeTable}
                 className="text-left px-2 py-2 hover:bg-gray-100 rounded"
               >
                 Masayı Değiştir
               </button>
+
+              {/* MASALARI BİRLEŞTİR */}
               <button
                 onClick={handleMergeTable}
                 className="text-left px-2 py-2 hover:bg-gray-100 rounded"
               >
                 Masaları Birleştir
               </button>
+
+              {/* Vazgeç */}
               <button
                 onClick={closeMenuSheet}
                 className="text-left px-2 py-2 hover:bg-gray-100 rounded"
@@ -499,56 +494,6 @@ export default function OrdersPage() {
                 className="px-4 py-2 bg-blue-500 text-white rounded"
               >
                 Onayla
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MASA DEĞİŞTİR MODALI */}
-      {showChangeTableModal && (
-        <div className="fixed inset-0 bg-black/50 flex justify-center items-center z-50">
-          <div className="bg-white p-4 w-72">
-            <h2 className="text-sm font-bold mb-2">Masayı Değiştir</h2>
-
-            <label className="block text-xs font-semibold mb-1">Bölge Seç:</label>
-            <select
-              className="border px-2 py-1 text-xs w-full mb-2"
-              value={changeRegion}
-              onChange={(e) => handleRegionSelect(e.target.value)}
-            >
-              <option value="">-- Seçiniz --</option>
-              {regions.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name}
-                </option>
-              ))}
-            </select>
-
-            {changeRegion && (
-              <div className="max-h-48 overflow-y-auto border p-2 mb-2">
-                {emptyTables.length === 0 ? (
-                  <div className="text-xs text-gray-500">Boş masa yok</div>
-                ) : (
-                  emptyTables.map((t) => (
-                    <div
-                      key={t.id}
-                      onClick={() => handleTransferTable(t.id)}
-                      className="p-1 border mb-1 cursor-pointer text-xs text-center hover:bg-gray-100"
-                    >
-                      Masa {t.tableId}
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
-
-            <div className="flex justify-end">
-              <button
-                onClick={() => setShowChangeTableModal(false)}
-                className="bg-gray-300 px-2 py-1 text-xs"
-              >
-                İptal
               </button>
             </div>
           </div>

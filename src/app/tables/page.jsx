@@ -8,7 +8,7 @@ import {
   getTablesByRegion,
   addTable,
   deleteTable,
-  // YENİ: alias güncellemek için
+  // Önemli: renameTable fonksiyonunuz server'da tanımlı olmalı
   renameTable,
 } from "../orders/actions";
 
@@ -18,7 +18,7 @@ export default function TablesManagementPage() {
   const [tables, setTables] = useState([]);
   const [newRegionName, setNewRegionName] = useState("");
 
-  // --- Modal için state'ler ---
+  // Modal için state
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [renameTableId, setRenameTableId] = useState(null);
   const [aliasValue, setAliasValue] = useState("");
@@ -31,7 +31,7 @@ export default function TablesManagementPage() {
     const regionsData = await getRegions();
     setRegions(regionsData);
 
-    // Varsayılan olarak ilk bölgeyi seçip masaları yükle
+    // İlk bölgeyi seçip masaları yükle
     if (regionsData.length > 0) {
       setSelectedRegion(regionsData[0].id);
       loadTables(regionsData[0].id);
@@ -55,7 +55,7 @@ export default function TablesManagementPage() {
 
   async function handleDeleteRegion(regionId) {
     await deleteRegion(regionId);
-    // Eğer silinen bölge, seçili bölge ise yeni bir bölge seç
+    // Silinen bölge, seçili bölgeyse yeni bir bölge seç
     if (selectedRegion === regionId) {
       const updatedRegions = regions.filter((r) => r.id !== regionId);
       if (updatedRegions.length > 0) {
@@ -86,59 +86,76 @@ export default function TablesManagementPage() {
     loadTables(regionId);
   }
 
-  // --- MASA İSİM DEĞİŞTİR: Modal Açma ---
+  // MASA İSİM DEĞİŞTİR (Modal Açma)
   function openRenameModal(table) {
     setRenameTableId(table.id);
-    // Mevcut alias varsa onu göster, yoksa boş
     setAliasValue(table.alias || "");
     setShowRenameModal(true);
   }
-
   function closeRenameModal() {
     setShowRenameModal(false);
     setRenameTableId(null);
     setAliasValue("");
   }
 
-  // --- MASA İSİM DEĞİŞTİR: Kaydet ---
+  // MASA İSİM DEĞİŞTİR (Kaydet)
   async function handleRenameSave() {
     if (!renameTableId) return;
-    // Sunucu tarafında alias güncelle
     await renameTable(renameTableId, aliasValue);
-    // Masaları yeniden yükle
     loadTables(selectedRegion);
-    // Modal'ı kapat
     closeRenameModal();
   }
 
   return (
     <div className="p-4">
-      <h1 className="text-2xl font-bold mb-4">Masa Yönetimi</h1>
-
-      {/* BÖLGE EKLE */}
-      <div className="mb-4">
-        <label className="font-semibold mr-2">Yeni Bölge Adı:</label>
+      {/* 1) Üst: Yeni Bölge Ekle */}
+      <div className="flex items-center gap-2 mb-4">
         <input
           type="text"
+          placeholder="Yeni Bölge Adı"
           value={newRegionName}
           onChange={(e) => setNewRegionName(e.target.value)}
-          className="border p-1 mr-2"
+          className="border px-2 py-1 flex-1"
         />
         <button
           onClick={handleAddRegion}
-          className="px-4 py-2 bg-green-500 text-white rounded"
+          className="px-3 py-2 bg-green-500 text-white rounded"
         >
           Bölge Ekle
         </button>
       </div>
 
-      {/* BÖLGE SEÇİMİ */}
-      <div className="mb-4">
-        <label className="mr-2 font-semibold">Bölge Seç:</label>
+      {/* 2) Bölgeler (yatay wrap) */}
+      <div className="mb-6">
+        <div className="font-semibold mb-2">Bölgeler:</div>
+        <div className="flex flex-wrap gap-3">
+          {regions.map((r) => (
+            <div
+              key={r.id}
+              className="flex items-center gap-2 bg-gray-100 px-2 py-1 rounded"
+            >
+              <span>{r.name}</span>
+              <button
+                onClick={() => handleDeleteRegion(r.id)}
+                className="text-sm bg-red-500 text-white px-2 py-1 rounded"
+              >
+                Sil
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Ayraç - Bölgeler ile Bölge Seç arasına hafif bir çizgi ya da boşluk */}
+      <hr className="mb-6" />
+
+      {/* 3) Bölge Seç + Masa Ekle */}
+      <div className="flex items-center gap-3 mb-6">
+        <label className="font-semibold whitespace-nowrap">Bölge Seç:</label>
         <select
           value={selectedRegion || ""}
           onChange={handleRegionChange}
-          className="border p-1"
+          className="border p-1 flex-1"
         >
           {regions.map((r) => (
             <option key={r.id} value={r.id}>
@@ -146,63 +163,80 @@ export default function TablesManagementPage() {
             </option>
           ))}
         </select>
+        <button
+          onClick={handleAddTable}
+          className="px-3 py-2 bg-green-300 rounded"
+        >
+          Masa Ekle
+        </button>
       </div>
 
-      {/* EKSTRA: Bölge Listeleme ve Silme Butonları */}
-      <div className="mb-4">
-        <h2 className="font-bold mb-2">Bölgeler</h2>
-        <ul>
-          {regions.map((r) => (
-            <li key={r.id} className="flex items-center mb-1">
-              <span className="mr-2">{r.name}</span>
-              <button
-                onClick={() => handleDeleteRegion(r.id)}
-                className="px-2 py-1 bg-red-500 text-white rounded"
-              >
-                Sil
-              </button>
-            </li>
-          ))}
-        </ul>
-      </div>
-
-      {/* MASA EKLE BUTONU */}
-      <button
-        onClick={handleAddTable}
-        className="px-4 py-2 bg-green-300 rounded"
-      >
-        Masa Ekle
-      </button>
-
-      {/* MASALAR LİSTESİ */}
-      <div className="grid grid-cols-4 gap-4 mt-4">
+      {/* 4) Masalar (3 sütun) */}
+      <div className="grid grid-cols-3 gap-3">
         {tables.map((table) => (
-          <div key={table.id} className="bg-gray-200 p-4 rounded">
-            {/* Alias varsa onu göster, yoksa Masa {tableId} */}
-            <div className="font-semibold">
+          <div
+            key={table.id}
+            className="bg-white border rounded p-3 text-center flex flex-col items-center"
+          >
+            <div className="font-semibold text-sm mb-2">
               {table.alias ? table.alias : `Masa ${table.tableId}`}
             </div>
 
-            {/* İsim Değiştir Butonu */}
-            <button
-              onClick={() => openRenameModal(table)}
-              className="mt-2 bg-blue-500 text-white rounded px-2 py-1"
-            >
-              İsim Değiştir
-            </button>
+            {/* İkon butonlar satırı */}
+            <div className="flex justify-between w-full">
+              {/* Sol: Kalem simgesi (İsim Değiştir) */}
+              <button
+                onClick={() => openRenameModal(table)}
+                className="bg-blue-500 text-white p-2 rounded"
+                title="İsim Değiştir"
+              >
+                {/* Heroicons pencil-alt */}
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-4 w-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M11 4H7a2 2 0 00-2 2v3m8-5l4 4m-6 2h2a2 2 0 012 2v3m-5-5l-4 4m5 1v2m-3 0h2"
+                  />
+                </svg>
+              </button>
 
-            {/* Masa Sil Butonu */}
-            <button
-              onClick={() => handleDeleteTable(table.id)}
-              className="mt-2 bg-red-400 text-white rounded px-2 py-1"
-            >
-              Sil
-            </button>
+              {/* Sağ: Çöp kutusu simgesi (Sil) */}
+              <button
+                onClick={() => handleDeleteTable(table.id)}
+                className="bg-red-500 text-white p-2 rounded"
+                title="Sil"
+              >
+                {/* Heroicons trash */}
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-4 w-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 
+                       2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 
+                       1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                  />
+                </svg>
+              </button>
+            </div>
           </div>
         ))}
       </div>
 
-      {/* İSİM DEĞİŞTİR (Alias) Modal */}
+      {/* Modal: Masa Adı Değiştir */}
       {showRenameModal && (
         <div className="fixed inset-0 flex items-center justify-center bg-black/50 z-50">
           <div className="bg-white p-4 rounded w-full max-w-sm">
@@ -211,7 +245,7 @@ export default function TablesManagementPage() {
               type="text"
               value={aliasValue}
               onChange={(e) => setAliasValue(e.target.value)}
-              className="border p-1 w-full"
+              className="border p-2 w-full"
             />
             <div className="flex justify-end gap-2 mt-4">
               <button

@@ -426,7 +426,7 @@ export default function TableDetailPage() {
               </button>
               <button
                 onClick={() => handlePay("card")}
-                className="bg-gray-200 text-black py-4 text-sm rounded font-semibold"
+                className="bg-red-300 text-black py-4 text-sm rounded font-semibold"
               >
                 Kartla Öde
               </button>
@@ -450,7 +450,7 @@ export default function TableDetailPage() {
               </button>
               <button
                 onClick={() => handlePay("cash")}
-                className="bg-gray-200 text-black py-4 text-sm rounded font-semibold"
+                className="bg-green-300 text-black py-4 text-sm rounded font-semibold"
               >
                 Nakit Öde
               </button>
